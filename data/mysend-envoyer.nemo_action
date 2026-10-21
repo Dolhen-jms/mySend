@@ -1,0 +1,12 @@
+[Nemo Action]
+# Clic droit dans nemo → « Envoyer avec mySend » : ouvre mySend avec ces fichiers dans le
+# presse-papiers et le choix de la machine ; Ctrl+V dans le dossier voulu les y copie.
+# À placer dans ~/.local/share/nemo/actions/ (nemo le prend en compte tout seul).
+Active=true
+Name=Envoyer avec mySend
+Comment=Copier vers une autre machine (ssh) avec mySend
+Exec=/home/dolhen/Documents/Scripts/mySend/result/bin/mysend-gui --send %F
+Icon-Name=document-send-symbolic
+Selection=notnone
+Extensions=any;
+Quote=double

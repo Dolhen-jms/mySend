@@ -1,0 +1,40 @@
+[package]
+name = "mysend"
+version = "0.1.0"
+edition = "2024"
+description = "Gestionnaire de fichiers locaux et distants (SSH), copies entre machines par rsync"
+repository = "https://github.com/Dolhen-jms/mySend"
+readme = "README.md"
+
+[dependencies]
+chrono = "0.4.45"
+crossterm = "0.28"
+image = "0.25.10"
+libc = "0.2.191"
+portable-pty = "0.9.0"
+ratatui = "0.29"
+ratatui-image = "8"
+regex = "1.13.1"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+sha1 = "0.11.0"
+sha2 = "0.11.1"
+shlex = "2.0.1"
+similar = "3.2.0"
+syntect = { version = "5.3.0", default-features = false, features = ["default-fancy"] }
+unicode-width = "0.2"
+vt100 = "0.15"
+gtk = { package = "gtk4", version = "0.11", features = ["v4_14"], optional = true }
+adw = { package = "libadwaita", version = "0.9", features = ["v1_6"], optional = true }
+
+[features]
+gui = ["dep:gtk", "dep:adw"]
+
+[[bin]]
+name = "mysend"
+path = "src/main.rs"
+
+[[bin]]
+name = "mysend-gui"
+path = "src/gui/main.rs"
+required-features = ["gui"]

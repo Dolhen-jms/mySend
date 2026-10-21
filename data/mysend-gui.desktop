@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=mySend
+GenericName=Gestionnaire de fichiers
+Comment=Fichiers locaux et distants (ssh), copies entre machines
+Exec=mysend-gui %F
+Icon=system-file-manager
+Terminal=false
+Categories=System;FileTools;FileManager;GTK;
+MimeType=inode/directory;
+StartupWMClass=fr.mysend.Gui

@@ -1,0 +1,12 @@
+[Nemo Action]
+# Clic droit dans nemo → « Envoyer à un appareil Apple (AirDrop) » : le radar de mySend
+# (omdrop) ; un clic sur l'appareil envoie. Les dossiers partent en .zip.
+# À placer dans ~/.local/share/nemo/actions/ (nemo le prend en compte tout seul).
+Active=true
+Name=Envoyer à un appareil Apple (AirDrop)
+Comment=Envoyer avec omdrop, depuis mySend
+Exec=/home/dolhen/Documents/Scripts/mySend/result/bin/mysend-gui --airdrop %F
+Icon-Name=phone-symbolic
+Selection=notnone
+Extensions=any;
+Quote=double
