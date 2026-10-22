@@ -377,17 +377,21 @@ pub fn copy(ctx: &Ctx, a: &Fs, src: &str, tree: bool, b: &Fs, dst: &str, extra: 
 fn leg(ctx: &Ctx, a: &Fs, src: &str, tree: bool, b: &Fs, dst: &str, extra: &[&str], label: &str) -> Result<(), String> {
     let slash = |p: &str| format!("{}/", p.trim_end_matches('/'));
     let (s, d) = if tree { (slash(src), slash(dst)) } else { (src.to_string(), dst.to_string()) };
+    let sudo = a.sudo.is_some() || b.sudo.is_some();
+    // rsync local inutilisable (sauf copie sur une même machine distante : seul le rsync
+    // distant sert) : copie SFTP directe
+    let same_remote = matches!((side(a), side(b)), (Some(x), Some(y)) if x == y);
+    let no_rsync = !same_remote && !crate::config::rsync_status().usable();
     // un onglet sudo ne passe pas par rsync : copie SFTP directe
-    let res = if a.sudo.is_some() || b.sudo.is_some() {
+    let res = if sudo || no_rsync {
         Err((None, String::new()))
     } else {
         ctx.exec(&rsync_argv(side(a), &s, side(b), &d, extra), None, label)
     };
-    let sudo = a.sudo.is_some() || b.sudo.is_some();
     match res {
         Ok(_) => Ok(()),
-        Err((code, msg)) if !ctx.cancelled() && (sudo || rsync_missing(code, &msg)) => {
-            ctx.set_label(&if sudo { format!("{label} (sftp)") } else { format!("{label} (sftp, rsync absent)") });
+        Err((code, msg)) if !ctx.cancelled() && (sudo || no_rsync || rsync_missing(code, &msg)) => {
+            ctx.set_label(&if sudo { format!("{label} (sftp)") } else { format!("{label} (sftp, rsync absent ou trop ancien)") });
             let opts = CopyOpts { update: extra.contains(&"-u"), delete: extra.contains(&"--delete") };
             let r = if tree {
                 let mut prog = Progress::new(tree_size(a, src));

@@ -29,25 +29,66 @@ Deux interfaces sur le même moteur :
   **annulation** (`Ctrl+Z`).
 - **Aperçu** : texte avec coloration syntaxique, images (protocole kitty si le terminal le
   gère), contenu des archives.
-- **AirDrop** vers un appareil Apple, via omdrop (Linux, facultatif).
+- **AirDrop** vers un appareil Apple : panneau AirDrop du système sous macOS ; sous Linux,
+  radar de mySend via omdrop (facultatif).
 
 ## Installation
 
-Il faut `ssh` dans le `PATH`, et de préférence `rsync` (sinon les copies passent par SFTP).
-Sur les machines distantes : un serveur SSH avec SFTP, et rsync si possible.
+- **macOS** : archive prête à l'emploi, voir [macOS](#macos) plus bas.
+- **NixOS / Nix (Linux)** : paquet complet, voir [Paquet Nix](#paquet-nix).
+- **Autre Linux** : compiler avec `cargo` ([Depuis les sources](#depuis-les-sources)).
 
-### Interface terminal
+Il faut `ssh` dans le `PATH`, et de préférence `rsync` 3 (sinon les copies passent par SFTP ;
+`:rsync` dans mySend dit lequel est utilisé). Sur les machines distantes : un serveur SSH
+avec SFTP, et rsync si possible.
 
-Aucune dépendance système, `cargo` suffit :
+### Paquet Nix
+
+`default.nix` construit le paquet complet (les deux interfaces ; le binaire GTK est
+enveloppé par `wrapGAppsHook4` et se lance hors de `nix-shell`). Sous Linux uniquement :
+sous macOS, utiliser l'archive.
+
+Sans cloner le dépôt :
 
 ```sh
+nix-env -f https://github.com/Dolhen-jms/mySend/archive/main.tar.gz -i   # installe dans le profil
+mysend
+```
+
+Ou dans `configuration.nix` (NixOS) :
+
+```nix
+environment.systemPackages = [
+  (pkgs.callPackage (builtins.fetchTarball "https://github.com/Dolhen-jms/mySend/archive/main.tar.gz") { })
+];
+```
+
+puis `sudo nixos-rebuild switch`. Pour une version figée, remplacer `main` par un tag
+(`v0.1.0`).
+
+Depuis un clone :
+
+```sh
+git clone https://github.com/Dolhen-jms/mySend.git && cd mySend
+nix-build          # → ./result/bin/mysend et ./result/bin/mysend-gui
+nix-env -f . -i    # ou : l'installer dans son profil
+```
+
+Mettre à jour : refaire `nix-env … -i` (ou `nixos-rebuild switch` ; avec `fetchTarball`,
+Nix garde l'archive en cache une heure). Désinstaller : `nix-env -e mysend`.
+
+### Depuis les sources
+
+Interface terminal : aucune dépendance système, `cargo` suffit.
+
+```sh
+git clone https://github.com/Dolhen-jms/mySend.git && cd mySend
 cargo build --release
 ./target/release/mysend
 ```
 
-### Interface graphique
-
-GTK4 et libadwaita sont nécessaires (`pkg-config`, `cairo`, `pango`, `gdk-pixbuf`…) :
+Interface graphique : GTK4 et libadwaita sont nécessaires (`pkg-config`, `cairo`, `pango`,
+`gdk-pixbuf`…).
 
 ```sh
 cargo build --release --features gui    # construit mysend et mysend-gui
@@ -56,23 +97,6 @@ cargo build --release --features gui    # construit mysend et mysend-gui
 
 Sous NixOS, `shell.nix` fournit ces dépendances :
 `nix-shell --run 'cargo build --release --features gui'`.
-
-### Paquet Nix
-
-`default.nix` construit le paquet complet (les deux interfaces) :
-
-```sh
-nix-build          # → ./result/bin/mysend et ./result/bin/mysend-gui
-nix-env -f . -i    # ou : l'installer dans son profil
-```
-
-ou dans `configuration.nix` :
-
-```nix
-environment.systemPackages = [ (pkgs.callPackage /chemin/vers/mySend { }) ];
-```
-
-Le binaire GTK y est enveloppé par `wrapGAppsHook4` : il se lance hors de `nix-shell`.
 
 ## Utilisation
 
@@ -102,7 +126,7 @@ Touches principales de l'interface terminal (liste complète : `F1`, `~` ou `:he
 | `=N` `-N` | comparer ce dossier / ce fichier avec l'onglet N |
 | `T` `w` | corbeille, transferts en cours |
 | `Ctrl+G` | passer à l'interface graphique |
-| `:` | ligne de commande (`:q`, `:shell` / `:terminal` / `:!`, `:gui`, `:airdrop`, `:help`) |
+| `:` | ligne de commande (`:q`, `:shell` / `:terminal` / `:!`, `:gui`, `:airdrop`, `:rsync`, `:help`) |
 
 Le comportement détaillé est décrit dans [SPEC.md](SPEC.md).
 
@@ -160,5 +184,56 @@ grep ERREUR ~/.local/state/mysend/mysend.log  # erreurs seulement
 
 ## macOS
 
-Le code compile pour macOS (interface terminal), mais n'a pas encore été testé sur un Mac.
-État et plan du portage : [PORTAGE-MACOS.md](PORTAGE-MACOS.md).
+L'interface terminal fonctionne sous macOS (Apple Silicon et Intel) ; l'interface graphique
+GTK n'est pas encore proposée. Rien d'autre à installer : ssh est fourni par macOS, et
+l'archive contient son propre rsync (celui de macOS est trop ancien).
+
+### Installer
+
+Ouvrir le **Terminal** (Applications → Utilitaires), puis :
+
+```sh
+curl -fsSL https://github.com/Dolhen-jms/mySend/releases/latest/download/mysend-macos.tar.gz | tar xz
+sh mysend-macos/install.sh
+```
+
+Le mot de passe administrateur est demandé pour écrire dans `/usr/local`. Le dossier
+`mysend-macos` peut ensuite être supprimé.
+
+### Lancer
+
+Dans le Terminal :
+
+```sh
+mysend
+```
+
+(macOS ne distingue pas les majuscules dans les noms de fichiers : `mySend` marche aussi.)
+
+Les machines de `~/.ssh/config` et celles annoncées sur le réseau local sont proposées avec
+`t`. `:rsync` indique quel rsync est utilisé. AirDrop (`A`) ouvre le panneau AirDrop du Mac.
+
+Pour les aperçus d'images nets, un terminal qui gère le protocole graphique de kitty
+([kitty](https://sw.kovidgoyal.net/kitty/), [Ghostty](https://ghostty.org/),
+[WezTerm](https://wezterm.org/)) ; dans le Terminal de macOS, les images sont dessinées en
+caractères.
+
+### Mettre à jour, désinstaller
+
+- Mettre à jour : refaire les deux commandes d'installation.
+- Désinstaller : `sudo rm -r /usr/local/lib/mysend /usr/local/bin/mysend`
+  (réglages et journaux : `~/.config/mysend`, `~/.cache/mysend`, `~/.local/state/mysend`).
+
+### Construire soi-même
+
+Sur un Mac avec les outils de développement Apple (`xcode-select --install`) et
+[rustup](https://rustup.rs) :
+
+```sh
+sh packaging/macos/build.sh          # → dist/mysend-macos.tar.gz (mysend + rsync universels)
+sh dist/mysend-macos/install.sh
+```
+
+L'archive des releases est construite de la même façon par GitHub Actions
+(`.github/workflows/macos.yml`) à chaque tag `v*`. État du portage :
+[PORTAGE-MACOS.md](PORTAGE-MACOS.md).

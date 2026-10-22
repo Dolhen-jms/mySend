@@ -75,6 +75,64 @@ pub fn rsync_bin() -> String {
     crate::session::sibling("rsync")
 }
 
+/// État du rsync local, vérifié une fois (`rsync --version`).
+#[derive(Clone, Debug)]
+pub enum Rsync {
+    /// rsync 3 ou plus : copies par rsync.
+    Ok { path: String, version: String },
+    /// Trop vieux pour nos options (rsync 2.x, openrsync de macOS) : copies par SFTP.
+    Old { path: String, version: String },
+    /// Introuvable : copies par SFTP.
+    Missing,
+}
+
+impl Rsync {
+    pub fn usable(&self) -> bool {
+        matches!(self, Rsync::Ok { .. })
+    }
+
+    /// Phrase pour l'utilisateur.
+    pub fn summary(&self) -> String {
+        match self {
+            Rsync::Ok { path, version } => format!("rsync {version} trouvé ({path}) : copies par rsync."),
+            Rsync::Old { path, version } => format!(
+                "rsync trop ancien ({version}, {path}) : copies par SFTP (plus lentes, sans reprise). Installe rsync 3."
+            ),
+            Rsync::Missing => "rsync introuvable : copies par SFTP (plus lentes, sans reprise). Installe rsync 3.".into(),
+        }
+    }
+}
+
+/// rsync local (celui de `rsync_bin`) : présent ? assez récent ? Détecté au premier appel.
+pub fn rsync_status() -> &'static Rsync {
+    static R: OnceLock<Rsync> = OnceLock::new();
+    R.get_or_init(|| {
+        let path = rsync_bin();
+        let r = match crate::proc::run(&[path.clone(), "--version".into()], Some(std::time::Duration::from_secs(5)), None) {
+            Err(_) => Rsync::Missing,
+            Ok(o) => {
+                let first = o.stdout.lines().next().unwrap_or("").to_string();
+                // « rsync  version 3.2.7  protocol version 31 » ; openrsync : « openrsync: protocol version 29 »
+                let version = first
+                    .split_whitespace()
+                    .skip_while(|w| *w != "version")
+                    .nth(1)
+                    .unwrap_or("?")
+                    .to_string();
+                let major: u32 = version.split('.').next().and_then(|m| m.parse().ok()).unwrap_or(0);
+                if first.contains("openrsync") || major < 3 {
+                    let version = if first.contains("openrsync") { "openrsync".to_string() } else { version };
+                    Rsync::Old { path, version }
+                } else {
+                    Rsync::Ok { path, version }
+                }
+            }
+        };
+        crate::log::info(&r.summary());
+        r
+    })
+}
+
 pub fn icons() -> bool {
     static ICONS: OnceLock<bool> = OnceLock::new();
     *ICONS.get_or_init(|| env_or("MYSEND_ICONS", "1") != "0")

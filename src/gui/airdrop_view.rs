@@ -82,6 +82,12 @@ impl Win {
             self.error(airdrop::unavailable_reason());
             return;
         }
+        if airdrop::native() {
+            // macOS : panneau AirDrop du système, qui choisit l'appareil
+            self.toast("AirDrop : choisis l'appareil dans la fenêtre du Mac.");
+            self.enqueue(airdrop::native_task(fs, items));
+            return;
+        }
         Radar::open(self, fs, items);
     }
 }

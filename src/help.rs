@@ -114,6 +114,7 @@ const SECTIONS: &[Section] = &[
             (":term  :!", "pareil (aussi :terminal)"),
             (":gui  :gtk", "passer à l'interface graphique (comme ^g)"),
             (":airdrop", "envoyer à un appareil Apple"),
+            (":rsync", "rsync trouvé ? sa version (sinon copies par SFTP)"),
             (":help  :h", "cette aide"),
         ],
     ),

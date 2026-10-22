@@ -2,7 +2,7 @@
 
 Évaluation à partir de la lecture du code (pas de compilation testée pour une cible Apple).
 
-## État (21 octobre 2026)
+## État (22 octobre 2026)
 
 Fait (un seul code pour les deux systèmes, `#[cfg(target_os = "macos")]`) :
 
@@ -10,20 +10,35 @@ Fait (un seul code pour les deux systèmes, `#[cfg(target_os = "macos")]`) :
   notifications (`busctl` / `osascript`).
 - Adresses locales par `getifaddrs` (plus de `ip`) ; mDNS par `dns-sd` sous macOS.
 - Éditeur : `MYSEND_EDITOR` → `VISUAL` → `EDITOR` → premier installé (hx, nvim, vim, nano) → `vi`.
-- rsync : celui livré à côté du binaire s'il existe (`config::rsync_bin`) ; rsync trop vieux
-  reconnu → repli SFTP.
+- rsync : celui livré à côté du binaire s'il existe (`config::rsync_bin`), détecté au
+  démarrage (`config::rsync_status`) : absent ou trop vieux → avertissement, copies
+  directement par SFTP, comparaison de dossiers refusée avec un message clair ; `:rsync`
+  affiche l'état. Erreurs d'option / de protocole d'un rsync distant → repli SFTP.
 - Thème facultatif : sans `~/.local/state/theme`, la TUI garde les couleurs du terminal et la
   GUI suit le clair / sombre du système.
-- GUI : terminal = `$TERMINAL`, sinon le premier installé, sinon Terminal.app (macOS).
-- AirDrop : message clair sous macOS (pas encore d'AirDrop natif).
+- AirDrop : panneau AirDrop du système (script JXA lancé par `osascript`,
+  `airdrop::native_task`) ; fichiers distants rapatriés d'abord, dossiers envoyés tels quels ;
+  si le panneau ne s'ouvre pas, fenêtre AirDrop du Finder + fichiers montrés dans le Finder.
 - syntect en pur Rust (`default-fancy`) : plus de bibliothèque C à compiler.
-- Vérifié : `cargo check --target aarch64-apple-darwin` passe sans avertissement (TUI).
-  **Pas encore lancé sur un vrai Mac.**
+- Distribution (TUI) : `packaging/macos/build.sh` (mysend + rsync 3.5.1 universels, signés
+  ad hoc), `packaging/macos/install.sh` (`/usr/local/bin/mysend`), workflow GitHub Actions
+  `.github/workflows/macos.yml` (build et tests sur un Mac, release sur tag `v*`).
+  Procédure : section macOS du README.
 
-Hors périmètre : actions Nemo (Linux uniquement), corbeille du Finder (la corbeille
-freedesktop de mySend marche telle quelle sous macOS, mais n'apparaît pas dans le Finder).
+Vérifié : `cargo check --target aarch64-apple-darwin` sans avertissement ; `install.sh` et la
+détection du rsync voisin testés sous Linux ; logique d'AirDrop testée avec de faux
+`osascript` / `open`. **Pas encore lancé sur un vrai Mac** : le workflow GitHub fera le
+premier build et le premier lancement (`--help`) ; le panneau AirDrop, `dns-sd` et les
+notifications restent à essayer à la main.
 
-Reste : compiler rsync 3 pour le `.app`, construire le `.app` / `.dmg`, tester sur un Mac.
+Décidé :
+- **Corbeille** : celle de mySend (freedesktop, `~/.local/share/Trash`) reste utilisée sous
+  macOS. La corbeille du Finder (`~/.Trash`) est protégée par macOS : un terminal ne peut ni
+  la lister ni en sortir des fichiers sans « accès complet au disque » (restauration et
+  Ctrl+Z impossibles). Conséquence : les fichiers supprimés par mySend n'apparaissent pas
+  dans la corbeille du Finder (`T` dans mySend pour les retrouver).
+- **Pas de `.app`** : on lance mySend depuis un terminal (`mysend`).
+- Hors périmètre pour l'instant : GUI GTK, actions Nemo (Linux uniquement).
 
 ## Verdict
 
@@ -121,9 +136,8 @@ Même emplacement que sous Linux, rien à chercher ailleurs : macOS fournit Open
 - **GUI GTK4 / libadwaita** : s'installe avec Homebrew et compile, mais aspect étranger (pas
   de barre de menus native, Ctrl au lieu de Cmd). Bundle `.app` avec les bibliothèques GTK
   pénible (≈ 50 à 100 Mo).
-- **AirDrop** : `omdrop` est une réimplémentation Linux. Sur Mac, il faut le vrai AirDrop
-  (`NSSharingService`, petite aide Swift) → réécriture de `src/airdrop.rs`, ou masquer la
-  fonction.
+- **AirDrop** : `omdrop` est une réimplémentation Linux. Sur Mac, le vrai AirDrop
+  (`NSSharingService`) — fait, par un script JXA (cf. État).
 - **Intégrations bureau** : actions Nemo → actions rapides du Finder ; raccourci Hyprland →
   skhd / Raycast. Optionnel.
 - **Nix** : `default.nix` passerait avec nix-darwin ; la partie GUI (`wrapGAppsHook4`) à
@@ -136,11 +150,9 @@ simple mais a besoin d'un terminal : l'app ouvrirait Terminal.app.
 
 ## Plan
 
-1. Module `platform` (`#[cfg(target_os = "macos")]`) : ouverture, notifications, adresses,
-   mDNS, corbeille. Aucun changement de comportement sous Linux.
-2. rsync embarqué trouvé par `sibling()`, repli sur celui du `PATH`.
-3. `rsync_missing` élargi aux erreurs d'option / de protocole → repli SFTP.
-4. `.app` de la TUI (≈ 2 à 4 jours, tests sur un vrai Mac compris).
-5. Plus tard, optionnel : GUI GTK, puis AirDrop natif.
-
-Les étapes 2 et 3 servent aussi sous Linux.
+1. ~~Module `platform`~~ : fait (corbeille : décidé de garder celle de mySend, cf. État).
+2. ~~rsync embarqué trouvé par `sibling()`~~ : fait, avec détection et avertissement.
+3. ~~`rsync_missing` élargi~~ : fait.
+4. ~~Distribution de la TUI~~ : archive + `install.sh` + GitHub Actions (pas de `.app`).
+5. Reste : premier lancement sur un vrai Mac (workflow GitHub puis essai à la main).
+6. Plus tard, optionnel : GUI GTK.

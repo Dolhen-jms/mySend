@@ -469,6 +469,11 @@ impl App {
                 "airdrop" => app.airdrop(),
                 // comme `!` : shell plein écran dans le dossier courant
                 "shell" | "sh" | "terminal" | "term" | "!" => app.shell(),
+                "rsync" => {
+                    let rs = crate::config::rsync_status();
+                    let sev = if rs.usable() { Severity::Info } else { Severity::Warning };
+                    app.notify(&rs.summary(), sev, 8.0);
+                }
                 "help" | "h" => {
                     app.push_modal(ModalKind::Help(Default::default()));
                 }

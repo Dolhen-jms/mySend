@@ -160,6 +160,11 @@ fn main() {
         app.notify(&format!("{n} élément(s) dans le presse-papiers.\nt : ouvrir une machine, p : coller."), Severity::Info, 8.0);
     }
     app.start_discovery();
+    // rsync : toujours noté dans le journal ; signalé à l'écran s'il ne sert pas (copies par SFTP)
+    let rs = config::rsync_status();
+    if !rs.usable() {
+        app.notify(&rs.summary(), Severity::Warning, 10.0);
+    }
 
     let mut last_refresh = Instant::now();
     loop {

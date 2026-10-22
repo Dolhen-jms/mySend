@@ -1,4 +1,10 @@
-//! AirDrop par `omdrop` : envoyer des fichiers à un appareil Apple proche.
+//! AirDrop : envoyer des fichiers à un appareil Apple proche.
+//!
+//! - **Linux** : par `omdrop` (radar de mySend pour choisir l'appareil).
+//! - **macOS** : par le panneau AirDrop du système (`native_task`), qui choisit lui-même
+//!   l'appareil ; à défaut, la fenêtre AirDrop du Finder avec les fichiers à glisser.
+//!
+//! Linux, en détail :
 //! Même façon de faire que le panneau quickshell : la radio est allumée au besoin
 //! (`omdrop on`), les appareils sont relevés toutes les 2 s (`peers --json`), leurs noms
 //! demandés en continu (`peers --json -n --stream`), et un « réveilleur » Bluetooth annonce
@@ -15,16 +21,19 @@ const CLI: &str = "omdrop";
 const WAKER: &str = "/run/current-system/sw/lib/omdrop/ble-airdrop-adv.py";
 
 pub fn available() -> bool {
-    crate::proc::which(CLI)
+    // macOS : AirDrop est fourni par le système (`native_task`)
+    cfg!(target_os = "macos") || crate::proc::which(CLI)
+}
+
+/// Vrai si l'envoi passe par le panneau AirDrop du système (macOS) plutôt que par le radar.
+pub fn native() -> bool {
+    cfg!(target_os = "macos")
 }
 
 /// Pourquoi AirDrop n'est pas disponible (message pour l'utilisateur).
+/// (Linux seulement : sous macOS, AirDrop est toujours disponible.)
 pub fn unavailable_reason() -> &'static str {
-    if cfg!(target_os = "macos") {
-        "AirDrop depuis mySend n'existe pas encore sous macOS : passe par le Finder (Partager → AirDrop)."
-    } else {
-        "omdrop introuvable : il faut le module omdrop de ton NixOS."
-    }
+    "omdrop introuvable : il faut le module omdrop de ton NixOS."
 }
 
 #[derive(Clone, Debug, Default)]
@@ -162,6 +171,47 @@ fn remember(name: &str) {
     let _ = std::fs::write(last_file(), format!("{name}\n"));
 }
 
+/// Prépare les fichiers à envoyer dans `tmp` : les distants sont rapatriés, les dossiers
+/// zippés si `zip_dirs` (omdrop n'envoie que des fichiers ; l'AirDrop de macOS prend les
+/// dossiers tels quels). Renvoie (chemins locaux, erreurs).
+fn gather(ctx: &crate::transfers::Ctx, fs: &FsRef, items: &[(String, Entry)], tmp: &std::path::Path, zip_dirs: bool) -> (Vec<String>, Vec<String>) {
+    let mut files: Vec<String> = Vec::new();
+    let mut errs = Vec::new();
+    for (path, e) in items {
+        if ctx.cancelled() {
+            break;
+        }
+        let name = basename(path).to_string();
+        // une copie locale si besoin (fichier distant, dossier à zipper)
+        let local = if fs.remote || fs.sudo.is_some() {
+            ctx.set_label(&format!("Rapatriement de {name}"));
+            let l = tmp.join(&name).to_string_lossy().into_owned();
+            let local_fs = crate::fs::Fs::local();
+            if let Err(err) = crate::transfers::copy(ctx, fs, path, e.is_tree(), &local_fs, &l, &[], &name) {
+                errs.push(format!("{name} : {err}"));
+                continue;
+            }
+            l
+        } else {
+            path.clone()
+        };
+        if e.is_dir && zip_dirs {
+            ctx.set_label(&format!("Compression de {name}"));
+            let zip = tmp.join(format!("{name}.zip")).to_string_lossy().into_owned();
+            let parent = crate::util::dirname(&local);
+            let argv: Vec<String> = ["sh", "-c", "cd \"$1\" && zip -qry \"$2\" \"$3\"", "sh", &parent, &zip, &name].iter().map(|s| s.to_string()).collect();
+            match crate::proc::run(&argv, None, None) {
+                Ok(o) if o.ok() => files.push(zip),
+                Ok(o) => errs.push(format!("{name} : zip : {}", o.stderr.trim())),
+                Err(err) => errs.push(format!("{name} : zip : {err}")),
+            }
+        } else {
+            files.push(local);
+        }
+    }
+    (files, errs)
+}
+
 /// Tâche d'envoi : les fichiers distants sont d'abord rapatriés, les dossiers zippés.
 /// `turn_off` : AirDrop est éteint à la fin (réussite ou non), pour rendre le Wi-Fi.
 pub fn send_task(fs: FsRef, items: Vec<(String, Entry)>, target: Target, turn_off: bool) -> Task {
@@ -172,40 +222,7 @@ pub fn send_task(fs: FsRef, items: Vec<(String, Entry)>, target: Target, turn_of
         touches: Vec::new(),
         run: Box::new(move |ctx| {
             let tmp = crate::config::mkdtemp("airdrop-").map_err(|e| vec![e.to_string()])?;
-            let mut files: Vec<String> = Vec::new();
-            let mut errs = Vec::new();
-            for (path, e) in &items {
-                if ctx.cancelled() {
-                    break;
-                }
-                let name = basename(path).to_string();
-                // une copie locale si besoin (fichier distant, dossier à zipper)
-                let local = if fs.remote || fs.sudo.is_some() {
-                    ctx.set_label(&format!("Rapatriement de {name}"));
-                    let l = tmp.join(&name).to_string_lossy().into_owned();
-                    let local_fs = crate::fs::Fs::local();
-                    if let Err(err) = crate::transfers::copy(ctx, &fs, path, e.is_tree(), &local_fs, &l, &[], &name) {
-                        errs.push(format!("{name} : {err}"));
-                        continue;
-                    }
-                    l
-                } else {
-                    path.clone()
-                };
-                if e.is_dir {
-                    ctx.set_label(&format!("Compression de {name}"));
-                    let zip = tmp.join(format!("{name}.zip")).to_string_lossy().into_owned();
-                    let parent = crate::util::dirname(&local);
-                    let argv: Vec<String> = ["sh", "-c", "cd \"$1\" && zip -qry \"$2\" \"$3\"", "sh", &parent, &zip, &name].iter().map(|s| s.to_string()).collect();
-                    match crate::proc::run(&argv, None, None) {
-                        Ok(o) if o.ok() => files.push(zip),
-                        Ok(o) => errs.push(format!("{name} : zip : {}", o.stderr.trim())),
-                        Err(err) => errs.push(format!("{name} : zip : {err}")),
-                    }
-                } else {
-                    files.push(local);
-                }
-            }
+            let (files, mut errs) = gather(ctx, &fs, &items, &tmp, true);
             let r = if files.is_empty() || ctx.cancelled() {
                 Ok(String::new())
             } else {
@@ -238,6 +255,109 @@ pub fn send_task(fs: FsRef, items: Vec<(String, Entry)>, target: Target, turn_of
                     Err(errs)
                 }
             }
+        }),
+    }
+}
+
+// ---------------------------------------------------------------- macOS : AirDrop du système
+
+/// Script JXA (JavaScript for Automation, fourni par macOS) : ouvre le panneau AirDrop du
+/// système avec les fichiers donnés en arguments et attend la fin de l'envoi.
+/// Écrit sur stdout `OK`, `ANNULÉ` ou `ERR <message>` (`ERR` seul : panneau impossible à ouvrir).
+const AIRDROP_JXA: &str = r#"
+ObjC.import('AppKit');
+var state = 0, msg = '';
+ObjC.registerSubclass({
+  name: 'MySendAirDropDelegate',
+  protocols: ['NSSharingServiceDelegate'],
+  methods: {
+    'sharingService:didShareItems:': {
+      types: ['void', ['id', 'id']],
+      implementation: function (svc, items) { state = 1; }
+    },
+    'sharingService:didFailToShareItems:error:': {
+      types: ['void', ['id', 'id', 'id']],
+      implementation: function (svc, items, err) {
+        // 3072 : NSUserCancelledError (fenêtre fermée sans choisir d'appareil)
+        state = err.code == 3072 ? 3 : 2;
+        msg = ObjC.unwrap(err.localizedDescription);
+      }
+    }
+  }
+});
+// constantes d'AppKit, avec leur valeur en repli si le pont JXA ne les expose pas
+function k(v, dflt) { return v === undefined ? dflt : v; }
+function run(argv) {
+  var ANY = k($.NSEventMaskAny, Number.MAX_SAFE_INTEGER);
+  var MODE = k($.NSDefaultRunLoopMode, 'kCFRunLoopDefaultMode');
+  var app = $.NSApplication.sharedApplication;
+  app.setActivationPolicy(k($.NSApplicationActivationPolicyRegular, 0));
+  app.activateIgnoringOtherApps(true);
+  var urls = $.NSMutableArray.array;
+  argv.forEach(function (p) { urls.addObject($.NSURL.fileURLWithPath(p)); });
+  var svc = $.NSSharingService.sharingServiceNamed('com.apple.share.AirDrop.send');
+  if (!svc || svc.isNil() || !svc.canPerformWithItems(urls)) { return 'ERR'; }
+  svc.delegate = $.MySendAirDropDelegate.alloc.init;
+  svc.performWithItems(urls);
+  // boucle d'événements à la main : le panneau en a besoin pour s'afficher et répondre
+  while (state === 0) {
+    var ev = app.nextEventMatchingMaskUntilDateInModeDequeue(
+      ANY, $.NSDate.dateWithTimeIntervalSinceNow(0.2), MODE, true);
+    if (ev && !ev.isNil()) { app.sendEvent(ev); }
+  }
+  return state === 1 ? 'OK' : state === 3 ? 'ANNULÉ' : 'ERR ' + msg;
+}
+"#;
+
+/// Dernier recours : la fenêtre AirDrop du Finder, et les fichiers montrés dans le Finder
+/// (à glisser sur l'appareil).
+fn finder_fallback(files: &[String]) {
+    let _ = crate::proc::spawn_detached(&["open".into(), "-b".into(), "com.apple.finder.Open-AirDrop".into()]);
+    let mut argv = vec!["open".to_string(), "-R".to_string()];
+    argv.extend(files.iter().cloned());
+    let _ = crate::proc::spawn_detached(&argv);
+}
+
+/// Tâche d'envoi par l'AirDrop du système (macOS) : fichiers distants rapatriés, puis panneau
+/// AirDrop de macOS, où l'on choisit l'appareil. Les dossiers partent tels quels.
+pub fn native_task(fs: FsRef, items: Vec<(String, Entry)>) -> Task {
+    let n = items.len();
+    Task {
+        title: format!("AirDrop : {n} élément(s)"),
+        touches: Vec::new(),
+        run: Box::new(move |ctx| {
+            let tmp = crate::config::mkdtemp("airdrop-").map_err(|e| vec![e.to_string()])?;
+            let (files, mut errs) = gather(ctx, &fs, &items, &tmp, false);
+            if !files.is_empty() && !ctx.cancelled() {
+                let script = tmp.join("airdrop.js");
+                let r = std::fs::write(&script, AIRDROP_JXA).map_err(|e| e.to_string()).and_then(|_| {
+                    let mut argv = vec!["osascript".to_string(), "-l".into(), "JavaScript".into(), script.to_string_lossy().into_owned()];
+                    argv.extend(files.iter().cloned());
+                    ctx.run_input(&argv, None, "Choisis l'appareil dans la fenêtre AirDrop")
+                });
+                match r.as_deref().map(str::trim) {
+                    Ok("OK") | Ok("ANNULÉ") => {}
+                    Ok(other) => {
+                        // panneau impossible : fenêtre AirDrop du Finder (fichiers gardés : pas de
+                        // nettoyage de tmp, on ne sait pas quand ils seront glissés)
+                        finder_fallback(&files);
+                        let why = other.strip_prefix("ERR").unwrap_or(other).trim();
+                        errs.push(if why.is_empty() {
+                            "Panneau AirDrop indisponible : glisse les fichiers sur l'appareil dans la fenêtre AirDrop du Finder.".into()
+                        } else {
+                            format!("AirDrop : {why}")
+                        });
+                        return Err(errs);
+                    }
+                    Err(e) => {
+                        finder_fallback(&files);
+                        errs.push(format!("AirDrop : {e} — fenêtre AirDrop du Finder ouverte à la place."));
+                        return Err(errs);
+                    }
+                }
+            }
+            let _ = std::fs::remove_dir_all(&tmp);
+            if errs.is_empty() { Ok(Vec::new()) } else { Err(errs) }
         }),
     }
 }

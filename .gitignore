@@ -14,3 +14,6 @@ CLAUDE.local.md
 *.swp
 *~
 .DS_Store
+
+# archives construites par packaging/macos/build.sh
+/dist

@@ -104,6 +104,10 @@ pub fn check_dirs(a: &FsRef, b: &FsRef) -> Result<(), String> {
     if a.sudo.is_some() || b.sudo.is_some() {
         return Err("Comparaison de dossiers impossible avec un onglet sudo (rsync) : compare des fichiers.".into());
     }
+    let rs = crate::config::rsync_status();
+    if !rs.usable() && !(a.remote && same(a, b)) {
+        return Err(format!("Comparaison de dossiers impossible : {}", rs.summary()));
+    }
     if a.remote && b.remote && !same(a, b) {
         return Err("rsync ne compare pas deux machines distantes entre elles : compare chacune avec un dossier local.".into());
     }

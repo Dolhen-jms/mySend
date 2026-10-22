@@ -142,6 +142,12 @@ impl App {
         if items.is_empty() {
             return;
         }
+        if airdrop::native() {
+            // macOS : panneau AirDrop du système, qui choisit l'appareil
+            self.notify("AirDrop : choisis l'appareil dans la fenêtre du Mac.", Severity::Info, 4.0);
+            self.enqueue(airdrop::native_task(fs, items));
+            return;
+        }
         let st = Arc::new(Mutex::new(State::default()));
         let alive = Arc::new(AtomicBool::new(true));
         let (s2, a2) = (st.clone(), alive.clone());
