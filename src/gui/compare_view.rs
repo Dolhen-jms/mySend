@@ -109,15 +109,20 @@ impl Win {
             return;
         }
         let (d, head, body, buttons) = frame("Comparer les dossiers", 820);
-        head.append(&line(&format!("<b>ici</b>       {}", escape(&format!("{}:{}", fa.label, pa)))));
-        head.append(&line(&format!("<b>là-bas</b>   {}", escape(&format!("{}:{}", fb.label, pb)))));
+        let (na, nb) = compare::side_names(&fa, &pa, &fb, &pb);
+        head.append(&line(&format!("<b>{}</b>   {}", escape(&na), escape(&format!("{}:{}", fa.label, pa)))));
+        head.append(&line(&format!("<b>{}</b>   {}", escape(&nb), escape(&format!("{}:{}", fb.label, pb)))));
         let spinner = adw::Spinner::new();
         spinner.set_size_request(32, 32);
         body.append(&spinner);
-        let send = button("Envoyer ici → là-bas", "Ajoute et remplace là-bas, ne supprime rien", Some("suggested-action"));
-        let fetch = button("Récupérer là-bas → ici", "Ajoute et remplace ici, ne supprime rien", None);
+        let send = button(&format!("Envoyer {na} → {nb}"), &format!("Ajoute et remplace sur {nb}, ne supprime rien"), Some("suggested-action"));
+        let fetch = button(&format!("Récupérer {nb} → {na}"), &format!("Ajoute et remplace sur {na}, ne supprime rien"), None);
         let newest = button("Le plus récent gagne", "Dans les deux sens : chaque fichier garde sa version la plus récente", None);
-        let mirror = button("Miroir ici → là-bas…", "Là-bas devient identique à ici (supprime ce qui est en trop là-bas)", Some("destructive-action"));
+        let mirror = button(
+            &format!("Miroir {na} → {nb}…"),
+            &format!("{nb} devient identique à {na} (supprime ce qui est en trop sur {nb})"),
+            Some("destructive-action"),
+        );
         for b in [&mirror, &newest, &fetch, &send] {
             buttons.append(b);
         }
@@ -159,14 +164,14 @@ impl Win {
                 }
                 let p = crate::theme::current();
                 for (title, v, color) in [
-                    ("Seulement ici", &it.only_here, &p.green),
-                    ("Différents (taille ou date)", &it.differ, &p.yellow),
-                    ("Seulement là-bas", &it.only_there, &p.red),
+                    (format!("Seulement sur {na}"), &it.only_here, &p.green),
+                    ("Différents (taille ou date)".to_string(), &it.differ, &p.yellow),
+                    (format!("Seulement sur {nb}"), &it.only_there, &p.red),
                 ] {
                     if v.is_empty() {
                         continue;
                     }
-                    body.append(&line(&format!("<b><span foreground=\"{color}\">{title}</span></b>  ({})", v.len())));
+                    body.append(&line(&format!("<b><span foreground=\"{color}\">{}</span></b>  ({})", escape(&title), v.len())));
                     let mut names: Vec<String> = v.iter().take(400).map(|n| escape(n)).collect();
                     if v.len() > 400 {
                         names.push(format!("<i>… et {} autres</i>", v.len() - 400));
@@ -185,11 +190,11 @@ impl Win {
                     let Some(d) = dw.upgrade() else { return };
                     let run = run.clone();
                     let msg = if n > 0 {
-                        format!("{n} élément(s) qui n'existent que là-bas seront supprimés là-bas.")
+                        format!("{n} élément(s) qui n'existent que sur {nb} y seront supprimés.")
                     } else {
-                        "Rien ne sera supprimé là-bas.".to_string()
+                        format!("Rien ne sera supprimé sur {nb}.")
                     };
-                    dialogs::confirm(&d, "Miroir ici → là-bas ?", &msg, "Miroir", true, move || run(DirSync::Mirror));
+                    dialogs::confirm(&d, &format!("Miroir {na} → {nb} ?"), &msg, "Miroir", true, move || run(DirSync::Mirror));
                 });
             },
         );
@@ -212,8 +217,9 @@ impl Win {
             }
             line(&m)
         };
-        head.append(&row("ici      ", &a, a.entry.mtime > b.entry.mtime));
-        head.append(&row("là-bas", &b, b.entry.mtime > a.entry.mtime));
+        let (na, nb) = Side::names(&a, &b);
+        head.append(&row(&na, &a, a.entry.mtime > b.entry.mtime));
+        head.append(&row(&nb, &b, b.entry.mtime > a.entry.mtime));
         let base = match compare::base_date(&a.fs, &a.path, &b.fs, &b.path) {
             Some(t) => format!("Ancêtre commun connu (dernière synchro par mySend le {}) : la fusion règle seule ce qui n'a changé que d'un côté.", fmt_time(t, "%Y-%m-%d %H:%M")),
             None => "Ancêtre commun inconnu (jamais synchronisés par mySend) : à la fusion, chaque différence sera un conflit à trancher.".into(),
@@ -224,8 +230,8 @@ impl Win {
         let spinner = adw::Spinner::new();
         spinner.set_size_request(32, 32);
         body.append(&spinner);
-        let to_b = button("Copier ici → là-bas", "Remplace le fichier de là-bas", Some("suggested-action"));
-        let to_a = button("Copier là-bas → ici", "Remplace le fichier d'ici", None);
+        let to_b = button(&format!("Copier {na} → {nb}"), &format!("Remplace le fichier sur {nb}"), Some("suggested-action"));
+        let to_a = button(&format!("Copier {nb} → {na}"), &format!("Remplace le fichier sur {na}"), None);
         let merge = button("Fusionner…", "Fusion automatique, puis les conflits restants à trancher dans l'éditeur", None);
         for b in [&merge, &to_a, &to_b] {
             buttons.append(b);

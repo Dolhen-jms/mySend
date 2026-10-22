@@ -78,6 +78,19 @@ pub fn base_date(a: &FsRef, pa: &str, b: &FsRef, pb: &str) -> Option<f64> {
         .map(|d| d.as_secs_f64())
 }
 
+/// Noms affichés pour les deux côtés d'une comparaison : le nom des machines, complété par
+/// le nom du dossier (ou par 1 / 2) quand les deux côtés sont sur la même machine.
+pub fn side_names(fa: &Fs, pa: &str, fb: &Fs, pb: &str) -> (String, String) {
+    if fa.label != fb.label {
+        return (fa.label.clone(), fb.label.clone());
+    }
+    let (ba, bb) = (basename(pa), basename(pb));
+    if !ba.is_empty() && !bb.is_empty() && ba != bb {
+        return (format!("{} ({ba})", fa.label), format!("{} ({bb})", fb.label));
+    }
+    (format!("{} (1)", fa.label), format!("{} (2)", fb.label))
+}
+
 /// Un des deux fichiers comparés.
 #[derive(Clone)]
 pub struct Side {
@@ -89,6 +102,11 @@ pub struct Side {
 impl Side {
     pub fn label(&self) -> String {
         format!("{}:{}", self.fs.label, self.path)
+    }
+
+    /// Noms des deux côtés (cf. `side_names`).
+    pub fn names(a: &Side, b: &Side) -> (String, String) {
+        side_names(&a.fs, &a.path, &b.fs, &b.path)
     }
 
     /// Le fichier a-t-il changé depuis qu'on l'a lu ?
@@ -222,7 +240,8 @@ pub fn diff_files(a: &Side, b: &Side) -> Vec<DiffLine> {
     }
     let (ta, tb) = (String::from_utf8_lossy(xa), String::from_utf8_lossy(ya));
     let d = similar::TextDiff::from_lines(ta.as_ref(), tb.as_ref());
-    let text = d.unified_diff().context_radius(3).header("ici", "là-bas").to_string();
+    let (na, nb) = Side::names(a, b);
+    let text = d.unified_diff().context_radius(3).header(&na, &nb).to_string();
     let mut out: Vec<DiffLine> = text
         .lines()
         .map(|l| {
@@ -266,8 +285,7 @@ pub fn prepare_merge(a: &Side, b: &Side) -> Result<Merge, String> {
     let (Ok(ta), Ok(tb)) = (String::from_utf8(da), String::from_utf8(db)) else {
         return Err("Fusion impossible : fichier binaire ou pas en UTF-8.".into());
     };
-    let la = format!("ici ({})", a.label());
-    let lb = format!("là-bas ({})", b.label());
+    let (la, lb) = (a.label(), b.label());
     let base = base_path(&a.fs, &a.path, &b.fs, &b.path);
     if let (Ok(bt), true) = (std::fs::read(&base), crate::proc::which("git")) {
         if let Ok(tmp) = crate::config::mkdtemp("merge3-") {

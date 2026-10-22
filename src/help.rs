@@ -86,9 +86,9 @@ const SECTIONS: &[Section] = &[
         &[
             ("=1…=9", "comparer ce dossier avec celui de l'onglet N"),
             ("-1…-9", "comparer le fichier sous le curseur avec celui de l'onglet N"),
-            ("> <", "ici → là-bas / là-bas → ici (ne supprime rien)"),
+            ("> <", "cet onglet → l'autre / l'autre → cet onglet (ne supprime rien)"),
             ("u", "le plus récent gagne, dans les deux sens"),
-            ("m", "dossiers : miroir ici → là-bas (supprime le surplus)"),
+            ("m", "dossiers : miroir de cet onglet vers l'autre (supprime le surplus)"),
             ("f", "fichiers : fusionner (conflits à trancher dans helix)"),
             ("e", "fichiers : les deux côte à côte dans helix"),
         ],

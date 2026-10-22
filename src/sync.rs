@@ -160,9 +160,9 @@ fn diff_lines(d: Vec<DiffLine>) -> Vec<Line<'static>> {
         .collect()
 }
 
-pub fn file_row(tag: &str, s: &Side, newer: bool) -> Line<'static> {
+pub fn file_row(tag: &str, w: usize, s: &Side, newer: bool) -> Line<'static> {
     let mut spans = vec![
-        Span::styled(format!("{tag:<8}"), b()),
+        Span::styled(format!("{tag:<w$}"), b()),
         Span::raw(format!("{}  ", s.label())),
         Span::raw(format!("{}  ", human(s.entry.size))),
         Span::raw(fmt_time(s.entry.mtime, "%Y-%m-%d %H:%M:%S")),

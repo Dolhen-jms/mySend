@@ -659,9 +659,11 @@ pub fn render(f: &mut Frame, app: &mut App, idx: usize) {
         ModalKind::DirCmp(d) => {
             let area = centered(full, full.width * 9 / 10, full.height * 8 / 10);
             let inner = dialog(f, area, None);
+            let (na, nb) = crate::compare::side_names(&d.here.0, &d.here.1, &d.there.0, &d.there.1);
+            let w = na.chars().count().max(nb.chars().count()) + 2;
             let mut head = vec![
-                Line::from(vec![Span::styled("ici     ", bold(GREEN)), Span::raw(format!("{}:{}", d.here.0.label, d.here.1))]),
-                Line::from(vec![Span::styled("là-bas  ", bold(RED)), Span::raw(format!("{}:{}", d.there.0.label, d.there.1))]),
+                Line::from(vec![Span::styled(format!("{na:<w$}"), bold(GREEN)), Span::raw(format!("{}:{}", d.here.0.label, d.here.1))]),
+                Line::from(vec![Span::styled(format!("{nb:<w$}"), bold(RED)), Span::raw(format!("{}:{}", d.there.0.label, d.there.1))]),
             ];
             head.push(Line::from(""));
             let mut body: Vec<Line> = Vec::new();
@@ -673,9 +675,9 @@ pub fn render(f: &mut Frame, app: &mut App, idx: usize) {
                         body.push(Line::from(Span::styled("Identiques.", fg(GREEN))));
                     }
                     for (title, list, col) in [
-                        ("Seulement ici", &r.only_here, GREEN),
-                        ("Différents (taille ou date)", &r.differ, YELLOW),
-                        ("Seulement là-bas", &r.only_there, RED),
+                        (format!("Seulement sur {na}"), &r.only_here, GREEN),
+                        ("Différents (taille ou date)".to_string(), &r.differ, YELLOW),
+                        (format!("Seulement sur {nb}"), &r.only_there, RED),
                     ] {
                         if list.is_empty() {
                             continue;
@@ -691,8 +693,8 @@ pub fn render(f: &mut Frame, app: &mut App, idx: usize) {
                 }
             }
             let hints = [
-                "> envoyer ici → là-bas   < récupérer là-bas → ici   u fusionner (le plus récent gagne)",
-                "m miroir ici → là-bas (supprime ce qui est en trop là-bas)   Échap fermer",
+                format!("> envoyer {na} → {nb}   < récupérer {nb} → {na}   u fusionner (le plus récent gagne)"),
+                format!("m miroir {na} → {nb} (supprime ce qui est en trop sur {nb})   Échap fermer"),
             ];
             let hh = 2u16;
             f.render_widget(Paragraph::new(head), Rect { height: 3, ..inner });
@@ -707,7 +709,9 @@ pub fn render(f: &mut Frame, app: &mut App, idx: usize) {
             let area = centered(full, full.width * 9 / 10, full.height * 8 / 10);
             let inner = dialog(f, area, None);
             let (ma, mb) = (fc.a.entry.mtime, fc.b.entry.mtime);
-            let mut head = vec![file_row("ici", &fc.a, ma > mb), file_row("là-bas", &fc.b, mb > ma)];
+            let (na, nb) = crate::compare::Side::names(&fc.a, &fc.b);
+            let w = na.chars().count().max(nb.chars().count()).max(7) + 1;
+            let mut head = vec![file_row(&na, w, &fc.a, ma > mb), file_row(&nb, w, &fc.b, mb > ma)];
             let anc = match fc.base_date {
                 Some(t) => format!(
                     "connu (dernière synchro par mySend le {}) : f fusionne tout seul ce qui n'a changé que d'un côté",
@@ -715,7 +719,7 @@ pub fn render(f: &mut Frame, app: &mut App, idx: usize) {
                 ),
                 None => "inconnu (jamais synchronisés par mySend) : avec f, chaque différence sera un conflit à trancher".into(),
             };
-            head.push(Line::from(vec![Span::styled(format!("{:<8}", "ancêtre"), b()), Span::styled(anc, dim())]));
+            head.push(Line::from(vec![Span::styled(format!("{:<w$}", "ancêtre"), b()), Span::styled(anc, dim())]));
             head.push(Line::from(""));
             let hh = inner.height.min(5);
             f.render_widget(Paragraph::new(head).wrap(Wrap { trim: false }), Rect { height: hh, ..inner });
@@ -723,7 +727,7 @@ pub fn render(f: &mut Frame, app: &mut App, idx: usize) {
             let bh = inner.height.saturating_sub(hh + 2);
             f.render_widget(Paragraph::new(body), Rect { y: inner.y + hh, height: bh, ..inner });
             f.render_widget(
-                hint("> copier ici → là-bas   < copier là-bas → ici   u le plus récent gagne   f fusionner   e côte à côte   Échap fermer"),
+                hint(&format!("> copier {na} → {nb}   < copier {nb} → {na}   u le plus récent gagne   f fusionner   e côte à côte   Échap fermer")),
                 Rect { y: inner.y + inner.height - 1, height: 1, ..inner },
             );
         }
