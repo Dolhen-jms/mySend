@@ -65,14 +65,15 @@ impl Win {
             let b = mysend::util::basename(&cwd);
             if b.is_empty() { "archive".into() } else { b.to_string() }
         };
-        let default = format!("{base}.tar.gz");
+        let formats = mysend::archive::FORMATS;
+        let sel = formats.iter().position(|f| *f == mysend::archive::last_format()).unwrap_or(0);
         let stem = base.chars().count() as i32;
         let pw = Rc::downgrade(p);
         dialogs::form(
             &self.window,
             "Compresser",
-            "Le format suit l'extension : .tar.gz, .tar.xz, .tar.zst, .zip…",
-            &[Field::Text("Nom de l'archive", &default)],
+            "",
+            &[Field::Text("Nom de l'archive", &base), Field::Choice("Format", formats, sel)],
             "Compresser",
             Some((0, stem)),
             move |v| {
@@ -80,7 +81,7 @@ impl Win {
                 if name.is_empty() {
                     return;
                 }
-                let out = mysend::util::normpath(&join(&cwd, &name));
+                let out = mysend::util::normpath(&join(&cwd, &mysend::archive::with_format(&name, &v[1])));
                 let task = mysend::archive::compress_task(fs, cwd, &items, out);
                 win().enqueue(task);
                 let _ = pw;

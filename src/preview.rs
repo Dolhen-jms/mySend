@@ -1,4 +1,4 @@
-//! Aperçu (colonne de droite) : dossier, image, texte coloré, binaire.
+//! Aperçu (colonne de droite) : dossier, image, PDF, texte coloré, binaire.
 
 use crate::config::{cache_dir, IMAGE_LIMIT, PREVIEW_BYTES};
 use crate::fs::{errstr, Entry, Fs};
@@ -10,7 +10,8 @@ use crate::highlight::{Fg, Seg};
 
 pub enum Preview {
     Dir { entries: Vec<Entry> },
-    Image { dims: Option<(u32, u32)>, size: u64, image: Option<image::DynamicImage>, key: String },
+    /// Image, ou première page d'un PDF (`pages` : `Some` pour un PDF).
+    Image { dims: Option<(u32, u32)>, size: u64, image: Option<image::DynamicImage>, key: String, pages: Option<Option<u32>> },
     Special,
     Binary { entry: Entry },
     Text { lines: Vec<Line<'static>> },
@@ -61,7 +62,13 @@ fn compute_inner(fs: &Fs, path: &str, e: &Entry, height: usize) -> std::io::Resu
         let dims = image::image_dimensions(&local).ok();
         let image = image::open(&local).ok();
         let key = format!("{}:{}:{}:{}", fs.target, path, e.mtime, e.size);
-        return Ok(Preview::Image { dims, size: e.size, image, key });
+        return Ok(Preview::Image { dims, size: e.size, image, key, pages: None });
+    }
+    if crate::pdf::is_pdf(e) {
+        let pdf = crate::pdf::first_page(fs, path, e)?;
+        let image = image::open(&pdf.png).ok();
+        let key = format!("{}:{}:{}:{}", fs.target, path, e.mtime, e.size);
+        return Ok(Preview::Image { dims: None, size: e.size, image, key, pages: Some(pdf.pages) });
     }
     let Some(data) = fs.read_head(path, PREVIEW_BYTES)? else {
         return Ok(Preview::Special);

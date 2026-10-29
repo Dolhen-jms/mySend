@@ -365,6 +365,13 @@ l'onglet ou l'entrée survolée a changé entre-temps. Cache des aperçus par
   (protocole kitty si dispo, sinon rendu caractères), largeur/hauteur auto, ≤ 100 % / reste.
   À distance : téléchargée dans `CACHE_DIR/images/sha1("target:path:mtime:size").ext`
   (réutilisée si présente). Pas de réaffichage si même image (anti-clignotement).
+- **PDF** : extension `pdf` et taille ≤ 50 Mio. Première page rendue par
+  `pdftoppm -png -f 1 -l 1 -singlefile -scale-to 1200` (timeout 20 s) dans
+  `CACHE_DIR/pdf/sha1("target:path:mtime:size").png`, nombre de pages par `pdfinfo` (à côté,
+  `.pages`) ; réutilisés si présents. À distance, le PDF est rapatrié dans ce dossier puis
+  effacé après le rendu. Affichage comme une image, ligne `PDF · N pages  ·  <taille>`.
+  Sans `pdftoppm` : erreur `aperçu PDF : pdftoppm introuvable (paquet poppler-utils)`. Le
+  paquet Nix ajoute poppler-utils à la fin du `PATH` des deux programmes.
 - **Fichier** : 32 Kio lus.
   - `read_head` → `None` (pas régulier) : `fichier spécial` dim italique.
   - Contient un octet NUL : `fichier binaire` (dim italique), ligne vide, taille, droits,
@@ -480,6 +487,9 @@ est sur l'un d'eux. Appelé après chaque opération modifiant des fichiers.
 | `Ctrl+c` | fermer l'onglet (le dernier → quitter) |
 | `[` / `]`, `Ctrl+Maj+Tab` / `Ctrl+Tab` | onglet précédent / suivant (circulaire) |
 | `1`…`9` | aller à l'onglet N |
+| `\|` / `_` | écran partagé côte à côte / l'un au-dessus de l'autre (§ 16.1) |
+| `F3` | écran partagé oui / non (côte à côte) |
+| `Tab` | écran partagé : passer à l'autre panneau |
 | `w` | fenêtre des transferts |
 | `R` | rafraîchir (vide le cache du FS de l'onglet) |
 | `q` | quitter (confirmation si transferts en cours) |
@@ -525,6 +535,7 @@ Libellés (centre de la barre d'état / titre du panneau) :
 - Clic dans la colonne parente sur un **dossier** : y aller (dossier frère). Sur un fichier : rien.
 - Molette dans la colonne courante : ±3 lignes (déplace le curseur, pas la vue). Molette
   dans la colonne parente : rien.
+- Écran partagé : un clic dans le panneau inactif le rend actif (le clic ne fait rien d'autre).
 
 ---
 
@@ -675,18 +686,28 @@ Le dossier temporaire est toujours supprimé.
 **Formats reconnus** (fin du nom, insensible à la casse, dans cet ordre) :
 `.tar.gz .tar.xz .tar.bz2 .tar.zst .tgz .tbz2 .txz .tar .zip .7z .gz .xz .bz2 .zst`
 
-**Compresser (`C`)** : nom par défaut `<nom>.tar.gz` (1 cible) ou `<nom du cwd ou
-"archive">.tar.gz` ; invite `Nom de l'archive (.tar.gz, .tar.xz, .tar.zst, .zip…) :` avec le
-curseur juste après le nom de base. Valide → tâche en file, décoche tout. La tâche : si
-l'archive existe → erreur `<nom> existe déjà` ; sinon, via `fs.sh` (local ou distant) :
-```sh
-cd "$1" && out="$2" && shift 2 && case "$out" in
-  *.zip) zip -qr "$out" -- "$@" ;;
-  *) tar -caf "$out" -- "$@" ;; esac
-```
-(`$1` = cwd, `$2` = chemin absolu de l'archive, puis les membres relatifs au cwd ; `tar -a`
-choisit la compression d'après l'extension). Titre de tâche
-`Compression de N élément(s) → label:chemin`, libellé `Compression → nom`.
+**Compresser (`C`)** : formats proposés `tar.gz zip 7z tar.xz tar.zst tar.bz2 tar`, par défaut
+le dernier utilisé (au départ `tar.gz`). Nom par défaut `<nom>.<format>` (1 cible) ou `<nom du cwd
+ou "archive">.<format>`. Terminal : invite `Nom de l'archive (Tab : format suivant — …) :`, curseur
+juste après le nom de base, Tab remplace l'extension par le format suivant. Interface graphique :
+champ « Nom de l'archive » (sans extension) et liste « Format ». Valide → tâche en file, décoche
+tout. La tâche : si l'archive existe → erreur `<nom> existe déjà` ; sinon `archive::COMPRESS_SH`
+via `fs.sh` (local ou distant), avec `$1` = cwd, `$2` = chemin absolu de l'archive, puis les
+membres relatifs au cwd :
+- taille totale des membres (`du -sb`, sinon `du -sk`) ;
+- compresseur selon l'extension : `zip -qr`, `7z a` (ou `7zz`, `7za`), `tar -caf` pour les
+  `.tar*` ; outil absent → `zip/7z n'est pas installé sur cette machine` ; autre extension →
+  `extension non gérée (…)` ;
+- l'archive est écrite sous `.mysend-<pid>-<nom>` dans le même dossier, renommée à la fin ;
+- toutes les 0,5 s : `MYSEND-PROGRESS <octets lus> <total>`, d'après `rchar` de
+  `/proc/<pid>/io` du compresseur (pour 7z, du dernier descendant : le binaire derrière le
+  script) ; `-` sans `/proc` (macOS) → barre indéterminée et « N à compresser » ;
+- la barre affiche `lus / total  débit/s  reste h:mm:ss` (99 % au plus ; « finalisation… » une
+  fois tout lu, le temps que le compresseur vide ses tampons) ;
+- échec, annulation (TERM/HUP, ou écriture impossible sur la sortie quand ssh est coupé) →
+  compresseur et enfants tués (`pkill -P`), fichier temporaire supprimé.
+
+Titre de tâche `Compression de N élément(s) → label:chemin`, libellé `Compression → nom`.
 
 **Extraire (`E`)** : rien si dossier ou rien survolé ; format non reconnu →
 `Pas une archive reconnue (tar, zip, 7z, gz, xz, bz2, zst).` (warning). `stem` = nom sans
@@ -936,6 +957,25 @@ rafraîchi toutes les 0,2 s. `1`…`9` annule la tâche N, `x` annule tout,
 - `Ctrl+c` : ferme l'onglet actif (actif = min(ancien, n-1)) ; dernier → quitter.
 - Le presse-papiers, la file de transferts et les marque-pages sont globaux ; tri, cachés,
   filtre, recherche, cochés, historique, mode visuel sont par onglet.
+
+### 16.1 Écran partagé
+
+Deux onglets affichés en même temps, chacun avec ses trois colonnes, dans un cadre titré
+` <n> <label>:<chemin> ` :
+- `|` : côte à côte ; `_` : l'un au-dessus de l'autre. La même touche referme le partage,
+  l'autre change de disposition. `F3` : partage côte à côte oui / non.
+- À l'ouverture, le second panneau (à droite / en bas) devient actif et montre l'onglet
+  suivant ; s'il n'y a qu'un onglet, un nouvel onglet est ouvert sur le même dossier.
+- Panneau actif : cadre épais (`┏━┓`) en couleur d'accent, titre gras ; inactif : cadre
+  arrondi bright_black, titre dim, curseur sur fond `parent_cursor_bg` (comme la colonne
+  parente). En-tête : l'onglet de l'autre panneau est écrit dans sa couleur au lieu de dim.
+- Le clavier, la barre d'état et le chemin de l'en-tête suivent le panneau actif.
+  `Tab` (ou un clic) passe à l'autre panneau. Choisir un onglet (`1`…`9`, `[`, `]`) l'affiche
+  dans le panneau actif ; si c'est celui de l'autre panneau, c'est ce panneau qui devient actif.
+- Fermer l'onglet d'un panneau le remplace par un autre onglet ; avec un seul onglet
+  restant, le partage s'arrête.
+- Panneau inactif : aperçu repris du cache (calculé quand il était actif), sans image ;
+  rafraîchissement automatique (§ 7.3) et `refresh_fs` comme le panneau actif.
 
 ---
 

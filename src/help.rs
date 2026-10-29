@@ -75,6 +75,8 @@ const SECTIONS: &[Section] = &[
             ("1…9  [ ]", "aller à l'onglet / précédent / suivant"),
             ("^Tab ^⇧Tab", "onglet suivant / précédent"),
             ("^c", "fermer l'onglet"),
+            ("|  _", "écran partagé : côte à côte / l'un au-dessus de l'autre"),
+            ("F3  Tab", "écran partagé oui/non, passer à l'autre panneau"),
             ("U", "accès refusé : sudo ou un autre utilisateur"),
             ("T", "corbeille : restaurer, supprimer, vider"),
             ("w", "transferts en cours"),

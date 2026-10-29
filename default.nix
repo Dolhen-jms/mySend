@@ -15,7 +15,11 @@ pkgs.rustPlatform.buildRustPackage {
   buildFeatures = [ "gui" ];
   nativeBuildInputs = [ pkgs.pkg-config pkgs.wrapGAppsHook4 ];
   buildInputs = [ pkgs.gtk4 pkgs.libadwaita ];
-  # ssh, rsync, sftp-server : trouvés dans le PATH de l'utilisateur
+  # ssh, rsync, sftp-server : trouvés dans le PATH de l'utilisateur ;
+  # pdftoppm / pdfinfo (aperçu des PDF) : fournis, à défaut de ceux du PATH
+  preFixup = ''
+    gappsWrapperArgs+=(--suffix PATH : ${pkgs.lib.makeBinPath [ pkgs.poppler-utils ]})
+  '';
   doCheck = false;
   postInstall = ''
     install -Dm644 data/mysend-gui.desktop $out/share/applications/mysend-gui.desktop

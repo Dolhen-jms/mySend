@@ -158,7 +158,53 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     if app.tabs.is_empty() {
         return;
     }
-    draw_header(f, app, header);
+    app.areas.other = Rect::default();
+    let other = app.split_other();
+    draw_header(f, app, header, other);
+    match (&app.split, other) {
+        (Some(s), Some(o)) => {
+            let (stacked, focus) = (s.stacked, s.focus);
+            let halves = [Constraint::Fill(1), Constraint::Fill(1)];
+            let areas: [Rect; 2] = if stacked { Layout::vertical(halves) } else { Layout::horizontal(halves) }.areas(body);
+            for (k, area) in areas.into_iter().enumerate() {
+                let active = k == focus;
+                let idx = if active { app.active } else { o };
+                let inner = pane_frame(f, app, idx, area, active);
+                if !active {
+                    app.areas.other = area;
+                }
+                draw_pane(f, app, idx, inner, active);
+            }
+        }
+        _ => draw_pane(f, app, app.active, body, true),
+    }
+    if trans_h > 0 {
+        draw_transfers(f, app, trans);
+    }
+    if let Some(h) = hints {
+        draw_hints(f, app, hint_area, &h);
+    }
+    draw_status(f, app, status);
+}
+
+/// Cadre d'un panneau de l'écran partagé : contour arrondi, en couleur d'accent pour le
+/// panneau actif ; titre : numéro, machine et dossier de l'onglet.
+fn pane_frame(f: &mut Frame, app: &App, idx: usize, area: Rect, active: bool) -> Rect {
+    let t = &app.tabs[idx];
+    let (border, title) = if active { (bold(accent()), bold(accent())) } else { (fg(BRIGHT_BLACK), dim()) };
+    let text = format!(" {} {}:{} ", idx + 1, t.fs.label, t.fs.pretty(&t.cwd));
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(if active { BorderType::Thick } else { BorderType::Rounded })
+        .border_style(border)
+        .title(Span::styled(truncate(&text, area.width.saturating_sub(4) as usize), title));
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+    inner
+}
+
+/// Colonnes parent / courant / aperçu d'un onglet. Seul le panneau actif reçoit la souris.
+fn draw_pane(f: &mut Frame, app: &mut App, idx: usize, body: Rect, active: bool) {
     let [pa, ca, va] = Layout::horizontal([Constraint::Fill(2), Constraint::Fill(4), Constraint::Fill(4)]).areas(body);
     // colonne courante encadrée par des traits verticaux
     let cur_block = Block::default()
@@ -171,30 +217,28 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         .border_style(fg(BRIGHT_BLACK));
     let ci = cur_block.inner(ca);
     f.render_widget(cur_block, ca);
-    app.areas.parent = pa;
-    app.areas.current = ci;
-    app.areas.preview = va;
-    app.col_height = ci.height as usize;
+    if active {
+        app.areas.parent = pa;
+        app.areas.current = ci;
+        app.areas.preview = va;
+        app.col_height = ci.height as usize;
+    }
 
-    draw_current(f, app, ci);
-    draw_parent(f, app, pa);
-    draw_preview(f, app, va);
-    if trans_h > 0 {
-        draw_transfers(f, app, trans);
-    }
-    if let Some(h) = hints {
-        draw_hints(f, app, hint_area, &h);
-    }
-    draw_status(f, app, status);
+    draw_current(f, app, idx, ci, active);
+    draw_parent(f, app, idx, pa);
+    draw_preview(f, app, idx, va, active);
 }
 
-fn draw_header(f: &mut Frame, app: &App, area: Rect) {
+/// `other` : onglet affiché dans l'autre panneau de l'écran partagé (non grisé).
+fn draw_header(f: &mut Frame, app: &App, area: Rect, other: Option<usize>) {
     let mut spans = Vec::new();
     for (i, t) in app.tabs.iter().enumerate() {
         let (glyph, col) = if t.fs.remote { ('\u{f233}', MAGENTA) } else { ('\u{f108}', GREEN) };
         let text = if use_icons() { format!("{} {glyph} {}", i + 1, t.fs.label) } else { format!("{} {}", i + 1, t.fs.label) };
         if i == app.active {
             spans.extend(pill(&text, col));
+        } else if Some(i) == other {
+            spans.push(Span::styled(format!(" {text} "), fg(col)));
         } else {
             spans.push(Span::styled(format!(" {text} "), dim()));
         }
@@ -234,15 +278,15 @@ fn truncate_spans(spans: Vec<Span<'static>>, w: usize) -> Vec<Span<'static>> {
     out
 }
 
-fn draw_current(f: &mut Frame, app: &mut App, area: Rect) {
+fn draw_current(f: &mut Frame, app: &mut App, idx: usize, area: Rect, active: bool) {
     let h = area.height as usize;
     let w = area.width as usize;
-    let (cursor, n) = (app.tab().cursor, app.tab().entries.len());
+    let (cursor, n) = (app.tabs[idx].cursor, app.tabs[idx].entries.len());
     {
-        let t = app.tab_mut();
+        let t = &mut app.tabs[idx];
         scroll_into_view(cursor, &mut t.offset, h, n, SCROLLOFF);
     }
-    let t = app.tab();
+    let t = &app.tabs[idx];
     if n == 0 {
         let msg = if t.raw.is_none() {
             "chargement…"
@@ -254,7 +298,8 @@ fn draw_current(f: &mut Frame, app: &mut App, area: Rect) {
         f.render_widget(empty_line(msg), area);
         return;
     }
-    let rev = cursor_style();
+    // panneau inactif : curseur discret, comme dans la colonne parente
+    let rev = if active { cursor_style() } else { Style::default().bg(parent_cursor_bg()) };
     let lines: Vec<Line> = t
         .entries
         .iter()
@@ -269,18 +314,18 @@ fn draw_current(f: &mut Frame, app: &mut App, area: Rect) {
     f.render_widget(Paragraph::new(lines), area);
 }
 
-fn draw_parent(f: &mut Frame, app: &mut App, area: Rect) {
+fn draw_parent(f: &mut Frame, app: &mut App, idx: usize, area: Rect) {
     let h = area.height as usize;
     let w = area.width as usize;
-    let Some(pdir) = app.tab().parent_dir() else { return };
-    let name = crate::util::basename(&app.tab().cwd).to_string();
-    let pc = app.tab().parent.iter().position(|e| e.name == name);
-    let n = app.tab().parent.len();
+    let Some(pdir) = app.tabs[idx].parent_dir() else { return };
+    let name = crate::util::basename(&app.tabs[idx].cwd).to_string();
+    let pc = app.tabs[idx].parent.iter().position(|e| e.name == name);
+    let n = app.tabs[idx].parent.len();
     if let Some(c) = pc {
-        let t = app.tab_mut();
+        let t = &mut app.tabs[idx];
         scroll_into_view(c, &mut t.parent_offset, h, n, SCROLLOFF);
     }
-    let t = app.tab();
+    let t = &app.tabs[idx];
     let cs = Style::default().bg(parent_cursor_bg());
     let lines: Vec<Line> = t
         .parent
@@ -296,11 +341,20 @@ fn draw_parent(f: &mut Frame, app: &mut App, area: Rect) {
     f.render_widget(Paragraph::new(lines), area);
 }
 
-fn draw_preview(f: &mut Frame, app: &mut App, area: Rect) {
-    let Some((key, p)) = app.preview.current.clone() else { return };
-    if app.hover_key().as_ref() != Some(&key) {
-        return;
-    }
+/// Panneau inactif : aperçu repris du cache s'il y est (calculé quand l'onglet était actif),
+/// sans les images.
+fn draw_preview(f: &mut Frame, app: &mut App, idx: usize, area: Rect, active: bool) {
+    let (key, p) = if active {
+        let Some((key, p)) = app.preview.current.clone() else { return };
+        if app.hover_key().as_ref() != Some(&key) {
+            return;
+        }
+        (key, p)
+    } else {
+        let Some(key) = app.hover_key_of(idx) else { return };
+        let Some(p) = app.preview.cache.get(&key).cloned() else { return };
+        (key, p)
+    };
     let w = area.width as usize;
     let h = area.height as usize;
     match &*p {
@@ -325,7 +379,7 @@ fn draw_preview(f: &mut Frame, app: &mut App, area: Rect) {
             f.render_widget(Paragraph::new(ls), area);
         }
         Preview::Dir { entries } => {
-            let t = app.tab();
+            let t = &app.tabs[idx];
             let list = arrange(entries, t.hidden, "", t.sort, None);
             let dk = (key.0, key.1.clone(), key.2);
             let mut head = vec![Span::styled(format!("{} élément(s) · ", list.len()), dim())];
@@ -343,14 +397,19 @@ fn draw_preview(f: &mut Frame, app: &mut App, area: Rect) {
             }
             f.render_widget(Paragraph::new(lines), area);
         }
-        Preview::Image { dims, size, image, key } => {
+        Preview::Image { dims, size, image, key, pages } => {
             let mut head = String::new();
+            match pages {
+                Some(Some(n)) => head.push_str(&format!("PDF · {n} page{}  ·  ", if *n > 1 { "s" } else { "" })),
+                Some(None) => head.push_str("PDF  ·  "),
+                None => {}
+            }
             if let Some((x, y)) = dims {
                 head.push_str(&format!("{x}×{y}  ·  "));
             }
             head.push_str(&human(*size));
             f.render_widget(Line::from(Span::styled(head, dim())), Rect { height: 1, ..area });
-            let Some(img) = image else { return };
+            let Some(img) = image.as_ref().filter(|_| active) else { return };
             if app.preview.image.as_ref().map(|(k, _)| k != key).unwrap_or(true) {
                 let proto = app.picker.new_resize_protocol(img.clone());
                 app.preview.image = Some((key.clone(), proto));

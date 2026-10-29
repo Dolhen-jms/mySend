@@ -4,4 +4,6 @@
 pkgs.mkShell {
   nativeBuildInputs = [ pkgs.pkg-config pkgs.wrapGAppsHook4 ];
   buildInputs = [ pkgs.gtk4 pkgs.libadwaita ];
+  # aperçu des PDF
+  packages = [ pkgs.poppler-utils ];
 }

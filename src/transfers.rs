@@ -193,6 +193,9 @@ impl Ctx {
     }
 
     fn parse_progress(&self, l: &str) {
+        if let Some(rest) = l.strip_prefix("MYSEND-PROGRESS ") {
+            return self.parse_compress_progress(rest);
+        }
         let Some(c) = progress_re().captures(l) else { return };
         let bytes: u64 = c[1].chars().filter(|c| c.is_ascii_digit()).collect::<String>().parse().unwrap_or(0);
         let pct: u8 = c[2].parse().unwrap_or(0);
@@ -200,6 +203,36 @@ impl Ctx {
         self.with(|t| {
             if let Some(r) = &mut t.running {
                 r.pct = Some(pct.min(100));
+                r.extra = extra;
+            }
+        });
+    }
+}
+
+impl Ctx {
+    /// « lus total » de `archive::COMPRESS_SH` (lus = « - » si inconnu).
+    fn parse_compress_progress(&self, rest: &str) {
+        let mut it = rest.split_whitespace();
+        let (Some(done), Some(total)) = (it.next(), it.next().and_then(|t| t.parse::<u64>().ok())) else { return };
+        let done = done.parse::<u64>().ok();
+        let elapsed = self.with(|t| t.running.as_ref().map(|r| r.started.elapsed())).flatten();
+        let (pct, extra) = match done {
+            // tout est lu : le compresseur (xz multi-thread…) vide ses tampons
+            Some(d) if total > 0 && d >= total => (Some(99), format!("{}  finalisation…", human(total))),
+            Some(d) if total > 0 => {
+                let mut extra = format!("{} / {}", human(d), human(total));
+                if let Some(el) = elapsed.filter(|e| e.as_secs_f64() >= 2.0 && d > 0) {
+                    let rate = d as f64 / el.as_secs_f64();
+                    let left = ((total - d) as f64 / rate) as u64;
+                    extra.push_str(&format!("  {}/s  reste {}:{:02}:{:02}", human(rate as u64), left / 3600, left / 60 % 60, left % 60));
+                }
+                (Some((d * 100 / total).min(99) as u8), extra)
+            }
+            _ => (None, format!("{} à compresser", human(total))),
+        };
+        self.with(|t| {
+            if let Some(r) = &mut t.running {
+                r.pct = pct;
                 r.extra = extra;
             }
         });

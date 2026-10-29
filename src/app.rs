@@ -201,11 +201,24 @@ pub struct Areas {
     pub parent: Rect,
     pub current: Rect,
     pub preview: Rect,
+    /// Panneau inactif de l'écran partagé (vide sinon) : un clic y passe.
+    pub other: Rect,
+}
+
+/// Écran partagé : deux onglets affichés en même temps.
+pub struct Split {
+    /// Vrai : l'un au-dessus de l'autre ; faux : côte à côte.
+    pub stacked: bool,
+    /// Onglets affichés (identifiants), dans l'ordre de l'écran (gauche / haut d'abord).
+    pub ids: [u64; 2],
+    /// Panneau actif, celui de l'onglet actif.
+    pub focus: usize,
 }
 
 pub struct App {
     pub tabs: Vec<Tab>,
     pub active: usize,
+    pub split: Option<Split>,
     pub local: FsRef,
     pub remotes: HashMap<String, FsRef>,
     pub yank: Option<Yank>,
@@ -240,6 +253,7 @@ impl App {
         App {
             tabs: Vec::new(),
             active: 0,
+            split: None,
             local,
             remotes: HashMap::new(),
             yank: None,
@@ -408,6 +422,66 @@ impl App {
             self.active = i;
             let cwd = self.tab().cwd.clone();
             self.load(cwd, None);
+        }
+    }
+
+    /// `|` / `_` : partage l'écran côte à côte / l'un au-dessus de l'autre. La même touche
+    /// referme le partage, l'autre change de disposition. Le second panneau (qui devient actif)
+    /// montre l'onglet suivant, sinon un nouvel onglet sur le même dossier.
+    pub fn toggle_split(&mut self, stacked: bool) {
+        if let Some(s) = &mut self.split {
+            if s.stacked == stacked {
+                self.split = None;
+            } else {
+                s.stacked = stacked;
+            }
+            return;
+        }
+        let first = self.tab().id;
+        if self.tabs.len() < 2 {
+            let t = self.tab();
+            let (fs, cwd, hover) = (t.fs.clone(), t.cwd.clone(), t.current().map(|e| e.name.clone()));
+            self.add_tab(fs, cwd, hover);
+        } else {
+            self.switch_tab((self.active + 1) % self.tabs.len());
+        }
+        self.split = Some(Split { stacked, ids: [first, self.tab().id], focus: 1 });
+    }
+
+    /// `Tab` : passe à l'autre panneau de l'écran partagé.
+    pub fn focus_other(&mut self) {
+        if let Some(i) = self.split_other() {
+            self.switch_tab(i);
+        }
+    }
+
+    /// Index de l'onglet du panneau inactif.
+    pub fn split_other(&mut self) -> Option<usize> {
+        self.sync_split();
+        let s = self.split.as_ref()?;
+        let id = s.ids[1 - s.focus];
+        self.tabs.iter().position(|t| t.id == id)
+    }
+
+    /// Garde l'écran partagé cohérent avec les onglets : le panneau actif montre l'onglet actif
+    /// (choisir l'onglet de l'autre panneau y passe) ; un onglet fermé est remplacé par un
+    /// autre ; avec un seul onglet, le partage s'arrête.
+    pub fn sync_split(&mut self) {
+        let Some(s) = &mut self.split else { return };
+        let Some(aid) = self.tabs.get(self.active).map(|t| t.id) else {
+            self.split = None;
+            return;
+        };
+        if s.ids[1 - s.focus] == aid {
+            s.focus = 1 - s.focus;
+        }
+        s.ids[s.focus] = aid;
+        let o = 1 - s.focus;
+        if !self.tabs.iter().any(|t| t.id == s.ids[o]) {
+            match self.tabs.iter().find(|t| t.id != aid) {
+                Some(t) => s.ids[o] = t.id,
+                None => self.split = None,
+            }
         }
     }
 
@@ -590,18 +664,32 @@ impl App {
         if !self.tabs.is_empty() && list.iter().any(|f| same(f, &self.tab().fs)) {
             self.reload(None);
         }
+        if let Some(i) = self.split_other() {
+            if list.iter().any(|f| same(f, &self.tabs[i].fs)) {
+                self.relist(i);
+            }
+        }
     }
 
-    /// Rafraîchissement automatique (toutes les 2 s).
+    /// Rafraîchissement automatique (toutes les 2 s) des onglets affichés.
     pub fn auto_refresh(&mut self) {
         self.tick += 1;
-        if !self.modals.is_empty() || self.tabs.is_empty() || self.tab().raw.is_none() {
+        if !self.modals.is_empty() || self.tabs.is_empty() {
             return;
         }
-        let tab = self.tab();
-        if tab.fs.remote && self.tick % 3 != 0 {
-            return;
+        let mut shown = vec![self.active];
+        shown.extend(self.split_other());
+        for i in shown {
+            let t = &self.tabs[i];
+            if t.raw.is_some() && (!t.fs.remote || self.tick % 3 == 0) {
+                self.relist(i);
+            }
         }
+    }
+
+    /// Relit le dossier d'un onglet en arrière-plan ; la liste n'est remplacée que si elle a changé.
+    fn relist(&self, i: usize) {
+        let tab = &self.tabs[i];
         let (tid, fs, path) = (tab.id, tab.fs.clone(), tab.cwd.clone());
         self.send_thread(move || {
             let res = fs.ls(&path);
@@ -847,6 +935,16 @@ impl App {
             "ctrl+c" => self.close_tab(),
             "ctrl+g" => self.to_gui(),
             "ctrl+z" => self.undo_last(),
+            "|" => self.toggle_split(false),
+            "_" => self.toggle_split(true),
+            "f3" => {
+                if self.split.is_some() {
+                    self.split = None;
+                } else {
+                    self.toggle_split(false);
+                }
+            }
+            "tab" => self.focus_other(),
             "A" => self.airdrop(),
             "[" | "ctrl+shift+tab" => {
                 let n = self.tabs.len();
@@ -978,6 +1076,7 @@ impl App {
         let cur = self.areas.current;
         let par = self.areas.parent;
         match m.kind {
+            MouseEventKind::Down(MouseButton::Left) if inside(self.areas.other) => self.focus_other(),
             MouseEventKind::Down(MouseButton::Left) if inside(cur) => {
                 let idx = self.tab().offset + (m.row - cur.y) as usize;
                 if idx >= self.tab().entries.len() {
@@ -1012,7 +1111,12 @@ impl App {
     // ------------------------------------------------------------ aperçu
 
     pub fn hover_key(&self) -> Option<PreviewKey> {
-        let t = self.tabs.get(self.active)?;
+        self.hover_key_of(self.active)
+    }
+
+    /// Clé d'aperçu de l'entrée sous le curseur d'un onglet.
+    pub fn hover_key_of(&self, i: usize) -> Option<PreviewKey> {
+        let t = self.tabs.get(i)?;
         let e = t.current()?;
         Some((Arc::as_ptr(&t.fs) as usize, t.path_of(&e.name), e.mtime.to_bits(), e.size))
     }

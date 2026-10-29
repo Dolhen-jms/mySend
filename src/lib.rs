@@ -12,6 +12,7 @@ pub mod fs;
 pub mod highlight;
 pub mod log;
 pub mod notify;
+pub mod pdf;
 pub mod platform;
 pub mod proc;
 pub mod session;

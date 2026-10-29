@@ -30,6 +30,23 @@ pub fn confirm(parent: &impl IsA<gtk::Widget>, heading: &str, body: &str, ok: &s
 pub enum Field<'a> {
     Text(&'a str, &'a str),
     Password(&'a str),
+    /// Liste déroulante : titre, choix, indice choisi ; la valeur est le texte du choix.
+    Choice(&'a str, &'a [&'a str], usize),
+}
+
+#[derive(Clone)]
+enum Row {
+    Entry(adw::EntryRow),
+    Combo(adw::ComboRow, Vec<String>),
+}
+
+impl Row {
+    fn value(&self) -> String {
+        match self {
+            Row::Entry(r) => r.text().to_string(),
+            Row::Combo(r, items) => items.get(r.selected() as usize).cloned().unwrap_or_default(),
+        }
+    }
 }
 
 /// Formulaire : un champ par ligne ; `on_ok` reçoit les valeurs dans l'ordre.
@@ -47,7 +64,7 @@ pub fn form(
     let list = gtk::ListBox::new();
     list.add_css_class("boxed-list");
     list.set_selection_mode(gtk::SelectionMode::None);
-    let mut rows: Vec<adw::EntryRow> = Vec::new();
+    let mut rows: Vec<Row> = Vec::new();
     for f in fields {
         let row: adw::EntryRow = match f {
             Field::Text(title, value) => {
@@ -61,10 +78,19 @@ pub fn form(
                 r.set_title(title);
                 r.upcast()
             }
+            Field::Choice(title, items, sel) => {
+                let r = adw::ComboRow::new();
+                r.set_title(title);
+                r.set_model(Some(&gtk::StringList::new(items)));
+                r.set_selected(*sel as u32);
+                list.append(&r);
+                rows.push(Row::Combo(r, items.iter().map(|s| s.to_string()).collect()));
+                continue;
+            }
         };
         row.set_activates_default(true);
         list.append(&row);
-        rows.push(row);
+        rows.push(Row::Entry(row));
     }
     d.set_extra_child(Some(&list));
     d.add_response("cancel", "Annuler");
@@ -77,14 +103,15 @@ pub fn form(
     d.connect_response(None, move |_, r| {
         if r == "ok" {
             if let Some(f) = cb.take() {
-                f(rows2.iter().map(|r| r.text().to_string()).collect());
+                f(rows2.iter().map(Row::value).collect());
             }
         }
     });
     d.present(Some(parent));
-    if let Some(first) = rows.first().cloned() {
+    let entries: Vec<adw::EntryRow> = rows.iter().filter_map(|r| if let Row::Entry(e) = r { Some(e.clone()) } else { None }).collect();
+    if let Some(first) = entries.first().cloned() {
         // une fois affiché : focus sur le premier champ vide (ou le premier), sélection éventuelle
-        let target = rows.iter().find(|r| r.text().is_empty()).cloned().unwrap_or(first.clone());
+        let target = entries.iter().find(|r| r.text().is_empty()).cloned().unwrap_or(first.clone());
         glib::idle_add_local_once(move || {
             target.grab_focus();
             // GTK sélectionne tout le texte en prenant le focus : la sélection voulue passe après

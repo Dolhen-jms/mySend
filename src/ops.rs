@@ -239,9 +239,9 @@ impl App {
             let b = basename(&cwd);
             if b.is_empty() { "archive".into() } else { b.to_string() }
         };
-        let default = format!("{base}.tar.gz");
+        let default = crate::archive::with_format(&base, crate::archive::last_format());
         let cur = base.chars().count();
-        self.prompt("Nom de l'archive (.tar.gz, .tar.xz, .tar.zst, .zip…) :", &default, Some(cur), move |app, v| {
+        let id = self.prompt("Nom de l'archive (Tab : format suivant — tar.gz, zip, 7z, tar.xz, tar.zst…) :", &default, Some(cur), move |app, v| {
             let Some(v) = v else { return };
             let name = v.trim().to_string();
             if name.is_empty() {
@@ -252,6 +252,9 @@ impl App {
             app.enqueue(task);
             app.tab_mut().selected.clear();
         });
+        if let Some(ModalKind::Prompt(p)) = self.modal_mut(id) {
+            p.complete = Some(Box::new(|_: &App, text: &str| Some((crate::archive::next_format(text), Vec::new()))));
+        }
     }
 
     pub fn extract(&mut self) {

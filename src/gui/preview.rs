@@ -230,6 +230,9 @@ fn compute(fs: &FsRef, path: &str, e: &Entry) -> Content {
         if mysend::archive::archive_ext(&e.name).is_some() {
             return Ok(Content::Archive(mysend::archive::list_contents(fs, path).map_err(std::io::Error::other)?));
         }
+        if mysend::pdf::is_pdf(e) {
+            return Ok(Content::Image(mysend::pdf::first_page(fs, path, e)?.png));
+        }
         let ext = ext_of(&e.name);
         if IMAGE_EXT.contains(&ext.as_str()) && e.size <= IMAGE_LIMIT {
             if !fs.remote {

@@ -1,6 +1,6 @@
 //! mySend — gestionnaire de fichiers à la yazi, en local et sur les machines du réseau.
 
-pub use mysend::{airdrop, archive, auth, bookmarks, compare, config, discover, fs, highlight, log, notify, platform, proc, session, sftp, theme, transfers, trash, undo, util};
+pub use mysend::{airdrop, archive, auth, bookmarks, compare, config, discover, fs, highlight, log, notify, pdf, platform, proc, session, sftp, theme, transfers, trash, undo, util};
 
 mod airdrop_tui;
 mod app;

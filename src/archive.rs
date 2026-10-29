@@ -3,15 +3,68 @@
 use crate::fs::{errstr, Entry, FsRef};
 use crate::transfers::Task;
 use crate::util::{basename, join, relpath};
+use std::sync::Mutex;
 use std::time::Duration;
 
 pub const ARCHIVE_EXTS: &[&str] = &[
     ".tar.gz", ".tar.xz", ".tar.bz2", ".tar.zst", ".tgz", ".tbz2", ".txz", ".tar", ".zip", ".7z", ".gz", ".xz", ".bz2", ".zst",
 ];
 
-pub const COMPRESS_SH: &str = r#"cd "$1" && out="$2" && shift 2 && case "$out" in
-  *.zip) zip -qr "$out" -- "$@" ;;
-  *) tar -caf "$out" -- "$@" ;; esac"#;
+/// Formats proposés à la compression, le premier par défaut.
+pub const FORMATS: &[&str] = &["tar.gz", "zip", "7z", "tar.xz", "tar.zst", "tar.bz2", "tar"];
+
+static LAST_FORMAT: Mutex<&str> = Mutex::new("tar.gz");
+
+/// Dernier format choisi (pour la prochaine compression).
+pub fn last_format() -> &'static str {
+    *LAST_FORMAT.lock().unwrap()
+}
+
+/// `name` avec l'extension du format `fmt` (en remplaçant une extension d'archive existante).
+pub fn with_format(name: &str, fmt: &str) -> String {
+    let stem = match archive_ext(name) {
+        Some(ext) => &name[..name.len() - ext.len()],
+        None => name,
+    };
+    format!("{stem}.{fmt}")
+}
+
+/// `name` avec le format suivant (Tab dans l'invite de compression).
+pub fn next_format(name: &str) -> String {
+    let cur = archive_ext(name).and_then(|e| FORMATS.iter().position(|f| e[1..] == **f));
+    let next = cur.map(|i| (i + 1) % FORMATS.len()).unwrap_or(0);
+    with_format(name, FORMATS[next])
+}
+
+/// Compresse `$@` (relatifs à `$1`) en `$2` ; le format suit l'extension. Affiche
+/// « MYSEND-PROGRESS lus total » toutes les 0,5 s (lus = « - » sans /proc, comme sous macOS).
+/// L'archive est écrite sous un nom caché puis renommée : en cas d'échec ou d'annulation,
+/// elle est supprimée et le compresseur arrêté (avec ses enfants : gzip, xz…).
+pub const COMPRESS_SH: &str = r#"cd "$1" || exit 1; final=$2; out=${2%/*}/.mysend-$$-${2##*/}; shift 2
+total=$(du -sb -- "$@" 2>/dev/null | awk '{s+=$1} END {print s+0}')
+[ "${total:-0}" -gt 0 ] || total=$(du -sk -- "$@" 2>/dev/null | awk '{s+=$1} END {print s*1024}')
+case "$out" in
+  *.zip) command -v zip >/dev/null || { echo "zip n'est pas installé sur cette machine" >&2; exit 1; }
+    set -- zip -qr "$out" -- "$@" ;;
+  *.7z) z=$(command -v 7z || command -v 7zz || command -v 7za) || { echo "7z n'est pas installé sur cette machine" >&2; exit 1; }
+    follow=1; set -- "$z" a -bd -bso0 -bsp0 "$out" -- "$@" ;;
+  *.tar|*.tar.gz|*.tgz|*.tar.xz|*.txz|*.tar.bz2|*.tbz2|*.tar.zst) set -- tar -caf "$out" -- "$@" ;;
+  *) echo "extension non gérée (.tar.gz, .zip, .7z, .tar.xz, .tar.zst, .tar.bz2, .tar)" >&2; exit 1 ;;
+esac
+"$@" & pid=$!
+stop() { pkill -P $pid 2>/dev/null; kill $pid 2>/dev/null; wait $pid 2>/dev/null; rm -f -- "$out"; exit 1; }
+trap stop HUP INT TERM
+trap '' PIPE
+while kill -0 $pid 2>/dev/null; do
+  p=$pid
+  # 7z est souvent un script qui lance le vrai binaire : suivre ce dernier
+  [ -z "$follow" ] || while c=$(cat /proc/$p/task/*/children 2>/dev/null | awk '{print $1; exit}') && [ -n "$c" ]; do p=$c; done
+  r=$(sed -n 's/^rchar: //p' /proc/$p/io 2>/dev/null)
+  echo "MYSEND-PROGRESS ${r:--} $total" || stop
+  sleep 0.5
+done
+wait $pid; st=$?
+[ $st -eq 0 ] && mv -f -- "$out" "$final" || { rm -f -- "$out"; exit 1; }"#;
 
 pub const EXTRACT_SH: &str = r#"mkdir -p -- "$2" && cd "$2" || exit 1;
 case "$1" in
@@ -33,6 +86,9 @@ else grep -rIl -i -F --exclude-dir=.git -- "$2" . | sed "s|^\./||"; fi | head -n
 
 /// Compresse `items` (dans `cwd`) en `out` ; le format suit l'extension.
 pub fn compress_task(fs: FsRef, cwd: String, items: &[(String, Entry)], out: String) -> Task {
+    if let Some(&f) = archive_ext(&out).and_then(|e| FORMATS.iter().find(|f| &e[1..] == **f)) {
+        *LAST_FORMAT.lock().unwrap() = f;
+    }
     let members: Vec<String> = items.iter().map(|(p, _)| relpath(p, &cwd)).collect();
     let n = members.len();
     let fs2 = fs.clone();
@@ -102,7 +158,11 @@ pub fn find(fs: &FsRef, cwd: &str, pat: &str, content: bool) -> Result<(Vec<Stri
 }
 
 /// Liste le contenu d'une archive (1000 entrées au plus), sur la machine où elle se trouve.
+/// Un gros .tar.gz à peu d'entrées se lit en entier : au-delà de 25 s, on arrête aussi côté
+/// distant (tuer ssh ne suffit pas, et chaque listage oublié occupe une session ssh).
+/// `kill 0` vise le groupe du script : seulement s'il en est le chef (jamais celui de mySend).
 const LIST_SH: &str = r#"f=$1
+w=; [ "$(ps -o pgid= -p $$ 2>/dev/null | tr -d ' ')" = $$ ] && { ( sleep 25; kill -TERM 0 ) >/dev/null 2>&1 & w=$!; }
 case "$f" in
   *.zip|*.ZIP|*.jar|*.apk)
     unzip -Z1 -- "$f" 2>/dev/null || bsdtar -tf "$f" 2>/dev/null \
@@ -111,7 +171,8 @@ case "$f" in
   *.tar|*.tar.*|*.tgz|*.tbz2|*.txz) tar -tf "$f" ;;
   *.gz|*.xz|*.bz2|*.zst) basename -- "$f" | sed 's/\.[^.]*$//' ;;
   *) echo "format inconnu" >&2; exit 2 ;;
-esac | head -n 1000"#;
+esac | head -n 1000
+[ -z "$w" ] || kill $w 2>/dev/null"#;
 
 pub fn list_contents(fs: &crate::fs::Fs, path: &str) -> Result<Vec<String>, String> {
     let o = fs.sh(LIST_SH, &[path], Some(Duration::from_secs(30))).map_err(|e| e.to_string())?;
