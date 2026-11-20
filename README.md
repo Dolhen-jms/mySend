@@ -64,7 +64,7 @@ environment.systemPackages = [
 ```
 
 puis `sudo nixos-rebuild switch`. Pour une version figée, remplacer `main` par un tag
-(`v0.2.0`).
+(`v0.2.1`).
 
 Depuis un clone :
 
