@@ -1,6 +1,6 @@
 [package]
 name = "mysend"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 description = "Gestionnaire de fichiers locaux et distants (SSH), copies entre machines par rsync"
 repository = "https://github.com/Dolhen-jms/mySend"
